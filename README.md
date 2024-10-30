@@ -6,6 +6,15 @@ Arthur Boschini da Fonseca - 20248033
 
 Using TPC-H, this project aims to work with large datasets by performing join operations and implementing external sorting to handle data efficiently within memory constraints.
 
+## WARNING
+
+Please make sure that you have the TPC-H files downloaded and all set up in your computer.
+** THIS PROJECT IS BASED ON TCP-H TABLES **
+
+Download link: https://www.tpc.org/
+
+The step-by-step instruction to install properly click [here](References/statement.pdf) ---> fourth slide of the project statement.
+
 ### First part:
 
 For the first part, the main objective was joining two tables into one:
