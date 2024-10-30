@@ -9,7 +9,7 @@ Using TPC-H, this project aims to work with large datasets by performing join op
 ## WARNING
 
 Please make sure that you have the TPC-H files downloaded and all set up in your computer.
-** THIS PROJECT IS BASED ON TCP-H TABLES **
+**THIS PROJECT IS BASED ON TCP-H TABLES**
 
 Download link: https://www.tpc.org/
 
