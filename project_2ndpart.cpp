@@ -3,12 +3,28 @@
 #include <vector>
 #include <string>
 #include <algorithm>
-#include <queue>
 #include <chrono>
 
-const int NUM_COLUMNS = 16;  // NUMBER OF COLUMNS IN THE TEXT
+struct LineItem {
+    int l_orderkey;
+    int l_partkey;
+    int l_suppkey;
+    int l_linenumber;
+    double l_quantity;
+    double l_extendedprice;
+    double l_discount;
+    double l_tax;
+    char l_returnflag;
+    char l_linestatus;
+    std::string l_shipDATE;
+    std::string l_commitDATE;
+    std::string l_receiptDATE;
+    std::string l_shipinstruct;
+    std::string l_shipmode;
+    std::string l_comment;
+};
 
-// SPLIT LINE (lineitem.tbl)
+// Utility: Split a string by a delimiter
 std::vector<std::string> split(const std::string &str, char delimiter) {
     std::vector<std::string> tokens;
     size_t start = 0, end;
@@ -20,226 +36,236 @@ std::vector<std::string> split(const std::string &str, char delimiter) {
     return tokens;
 }
 
-// CONVERTING TO CSV
-void convertToCSV(const std::string &inputFile, const std::string &outputFile) {
+// Parse a line into a LineItem structure
+LineItem parseLineItem(const std::string &line) {
+    LineItem item;
+    std::vector<std::string> columns = split(line, '|');
+    item.l_orderkey = std::stoi(columns[0]);
+    item.l_partkey = std::stoi(columns[1]);
+    item.l_suppkey = std::stoi(columns[2]);
+    item.l_linenumber = std::stoi(columns[3]);
+    item.l_quantity = std::stod(columns[4]);
+    item.l_extendedprice = std::stod(columns[5]);
+    item.l_discount = std::stod(columns[6]);
+    item.l_tax = std::stod(columns[7]);
+    item.l_returnflag = columns[8][0];
+    item.l_linestatus = columns[9][0];
+    item.l_shipDATE = columns[10];
+    item.l_commitDATE = columns[11];
+    item.l_receiptDATE = columns[12];
+    item.l_shipinstruct = columns[13];
+    item.l_shipmode = columns[14];
+    item.l_comment = columns[15];
+    return item;
+}
+
+// Separate columns into chunks, respecting buffer size
+void separateColumnsToChunksWithBuffer(const std::string &inputFile, int bufferSize) {
     std::ifstream inFile(inputFile);
-    std::ofstream outFile(outputFile);
-
-    if (!inFile.is_open() || !outFile.is_open()) {
-        std::cerr << "File opening error." << std::endl;
-        return;
-    }
-
-    int lineCount = 0;
-    std::string line;
-    while (std::getline(inFile, line)) {
-        if (!line.empty() && line.back() == '|') line.pop_back();
-        std::vector<std::string> columns = split(line, '|');
-        for (size_t i = 0; i < columns.size(); ++i) {
-            outFile << columns[i];
-            if (i < columns.size() - 1) {
-                outFile << ",";
-            }
-        }
-        outFile << "\n";
-        lineCount++;
-    }
-    inFile.close();
-    outFile.close();
-
-    std::cout << "File `lineitem_fixed.csv` successfully generated with " << lineCount << " lines." << std::endl;
-}
-
-// LOAD RECORDS IN CHUNKS
-std::vector<std::vector<std::string>> loadRecordsInChunks(std::ifstream &inFile, int num_records) {
-    std::vector<std::vector<std::string>> buffer;
-    std::string line;
-    int count = 0;
-
-    while (count < num_records && std::getline(inFile, line)) {
-        if (!line.empty()) {
-            buffer.push_back(split(line, ','));
-            ++count;
-        }
-    }
-
-    std::cout << "Loaded " << buffer.size() << " records in the current chunk." << std::endl;
-    return buffer;
-}
-
-// FUNCTION TO SORT DATA BY A SPECIFIED COLUMN
-void sortRecordsByColumn(std::vector<std::vector<std::string>> &records, int column) {
-    
-    /*
-    TRANSFORM THIS FUNCTION INTO OMP
-    */
-
-    if (records.empty()) {
-        std::cerr << "Error: no data to sort." << std::endl;
-        return;
-    }
-
-    std::cout << "Sorting " << records.size() << " records by column " << column << std::endl;
-    std::sort(records.begin(), records.end(), [column](const std::vector<std::string> &a, const std::vector<std::string> &b) {
-        return a[column] < b[column];
-    });
-
-    std::cout << "All data sorted." << std::endl;
-}
-
-// FUNCTION TO MERGE SORTED CHUNKS INTO A FINAL SORTED FILE
-void mergeSortedChunks(const std::vector<std::string> &chunkFiles, const std::string &outputFile, int column) {
-    std::ofstream outFile(outputFile);
-    if (!outFile.is_open()) {
-        std::cerr << "Error opening output file for merging." << std::endl;
-        return;
-    }
-    auto compare = [column](const std::pair<std::vector<std::string>, int> &a, const std::pair<std::vector<std::string>, int> &b) {
-        return a.first[column] > b.first[column];
-    };
-
-    /*starting a queue so we can keep track of the smallest 
-    element from each of the chunk files at any point, 
-    allowing the merging process to maintain order efficiently
-    */
-
-    std::priority_queue<std::pair<std::vector<std::string>, int>, std::vector<std::pair<std::vector<std::string>, int>>, decltype(compare)> minHeap(compare);
-    std::vector<std::ifstream> chunkStreams(chunkFiles.size());
-    for (size_t i = 0; i < chunkFiles.size(); ++i) {
-        chunkStreams[i].open(chunkFiles[i]);
-        if (!chunkStreams[i].is_open()) {
-            std::cerr << "Error opening chunk file: " << chunkFiles[i] << std::endl;
+    std::vector<std::ofstream> columnFiles(16);
+    for (int i = 0; i < 16; ++i) {
+        columnFiles[i].open("chunk_col" + std::to_string(i + 1) + ".tbl");
+        if (!columnFiles[i].is_open()) {
+            std::cerr << "Error opening file for column " << i + 1 << std::endl;
             return;
         }
-        std::string line;
-        if (std::getline(chunkStreams[i], line)) {
-            minHeap.emplace(split(line, ','), i);
+    }
+
+    std::string line;
+    int rowCount = 0;
+    std::vector<LineItem> buffer;
+
+    while (std::getline(inFile, line)) {
+        if (!line.empty() && line.back() == '|') line.pop_back();
+        buffer.push_back(parseLineItem(line));
+        rowCount++;
+
+        if (rowCount == bufferSize / sizeof(LineItem)) {
+            for (const auto &item : buffer) {
+                columnFiles[0] << item.l_orderkey << "\n";
+                columnFiles[1] << item.l_partkey << "\n";
+                columnFiles[2] << item.l_suppkey << "\n";
+                columnFiles[3] << item.l_linenumber << "\n";
+                columnFiles[4] << item.l_quantity << "\n";
+                columnFiles[5] << item.l_extendedprice << "\n";
+                columnFiles[6] << item.l_discount << "\n";
+                columnFiles[7] << item.l_tax << "\n";
+                columnFiles[8] << item.l_returnflag << "\n";
+                columnFiles[9] << item.l_linestatus << "\n";
+                columnFiles[10] << item.l_shipDATE << "\n";
+                columnFiles[11] << item.l_commitDATE << "\n";
+                columnFiles[12] << item.l_receiptDATE << "\n";
+                columnFiles[13] << item.l_shipinstruct << "\n";
+                columnFiles[14] << item.l_shipmode << "\n";
+                columnFiles[15] << item.l_comment << "\n";
+            }
+            buffer.clear();
+            rowCount = 0;
         }
     }
 
-    while (!minHeap.empty()) {
-        auto [record, index] = minHeap.top();
-        minHeap.pop();
-        for (size_t i = 0; i < record.size(); ++i) {
-            outFile << record[i];
-            if (i < record.size() - 1) {
-                outFile << ",";
+    for (const auto &item : buffer) {
+        columnFiles[0] << item.l_orderkey << "\n";
+        columnFiles[1] << item.l_partkey << "\n";
+        columnFiles[2] << item.l_suppkey << "\n";
+        columnFiles[3] << item.l_linenumber << "\n";
+        columnFiles[4] << item.l_quantity << "\n";
+        columnFiles[5] << item.l_extendedprice << "\n";
+        columnFiles[6] << item.l_discount << "\n";
+        columnFiles[7] << item.l_tax << "\n";
+        columnFiles[8] << item.l_returnflag << "\n";
+        columnFiles[9] << item.l_linestatus << "\n";
+        columnFiles[10] << item.l_shipDATE << "\n";
+        columnFiles[11] << item.l_commitDATE << "\n";
+        columnFiles[12] << item.l_receiptDATE << "\n";
+        columnFiles[13] << item.l_shipinstruct << "\n";
+        columnFiles[14] << item.l_shipmode << "\n";
+        columnFiles[15] << item.l_comment << "\n";
+    }
+
+    for (auto &file : columnFiles) {
+        file.close();
+    }
+    inFile.close();
+}
+
+// Sort a selected column chunk, respecting memory size
+void sortSelectedColumnChunkWithMemory(const std::string &inputFile, const std::string &outputFile, int memorySize) {
+    std::ifstream inFile(inputFile);
+    std::vector<std::string> buffer;
+    std::string value;
+    int rowCount = 0;
+
+    while (std::getline(inFile, value)) {
+        buffer.push_back(value);
+        rowCount++;
+
+        if (rowCount == memorySize / sizeof(std::string)) {
+            std::sort(buffer.begin(), buffer.end());
+            std::ofstream outFile(outputFile, std::ios::app);
+            for (const auto &val : buffer) {
+                outFile << val << "\n";
+            }
+            outFile.close();
+            buffer.clear();
+            rowCount = 0;
+        }
+    }
+
+    std::sort(buffer.begin(), buffer.end());
+    std::ofstream outFile(outputFile, std::ios::app);
+    for (const auto &val : buffer) {
+        outFile << val << "\n";
+    }
+    outFile.close();
+    inFile.close();
+}
+
+// Merge columns based on sorted column
+void mergeColumnsWithSortedColumn(const std::string &sortedColumnFile,
+                                  const std::vector<std::string> &columnFiles,
+                                  int sortedColumnIndex,
+                                  const std::string &outputFile) {
+    // Open the sorted column file
+    std::ifstream sortedFile(sortedColumnFile);
+    if (!sortedFile.is_open()) {
+        std::cerr << "Error opening sorted column file: " << sortedColumnFile << std::endl;
+        return;
+    }
+
+    // Open all column files
+    std::vector<std::ifstream> columnStreams(columnFiles.size());
+    for (size_t i = 0; i < columnFiles.size(); ++i) {
+        columnStreams[i].open(columnFiles[i]);
+        if (!columnStreams[i].is_open()) {
+            std::cerr << "Error opening column file: " << columnFiles[i] << std::endl;
+            return;
+        }
+    }
+
+    // Open the output file
+    std::ofstream outFile(outputFile);
+    if (!outFile.is_open()) {
+        std::cerr << "Error opening output file: " << outputFile << std::endl;
+        return;
+    }
+
+    std::string sortedValue;
+    std::vector<std::string> columnValues(columnFiles.size());
+
+    // Process each line in the sorted column file
+    while (std::getline(sortedFile, sortedValue)) {
+        for (size_t i = 0; i < columnFiles.size(); ++i) {
+            if (i == static_cast<size_t>(sortedColumnIndex)) {
+                columnValues[i] = sortedValue; // Use the sorted column value
+            } else {
+                std::getline(columnStreams[i], columnValues[i]); // Use the original values for other columns
+            }
+        }
+
+        // Write the reconstructed row to the output file
+        for (size_t i = 0; i < columnValues.size(); ++i) {
+            outFile << columnValues[i];
+            if (i < columnValues.size() - 1) {
+                outFile << "|";
             }
         }
         outFile << "\n";
-        //std::cout << "Written record to output file: " << record[0] << "..." << std::endl;
-        // Read the next record from the same chunk file
-        std::string line;
-        if (std::getline(chunkStreams[index], line)) {
-            minHeap.emplace(split(line, ','), index);
-        }
     }
-    //CLOSING
-    for (auto &stream : chunkStreams) {
+
+    // Close all files
+    sortedFile.close();
+    for (auto &stream : columnStreams) {
         stream.close();
     }
     outFile.close();
-    std::cout << "Merging of sorted chunks completed." << std::endl;
 }
 
-// MAIN FUNCTION TO SORT IN CHUNKS RESPECTING THE MEMORY LIMIT
-void sortCSVRecords(const std::string &inputFile, const std::string &outputFile, int column, int B_MB, int M_GB) {
-    std::ifstream inFile(inputFile);
 
-    if (!inFile.is_open()) {
-        std::cerr << "Error: could not open the file to sort." << std::endl;
-        return;
-    }
-    inFile.clear();
-    inFile.seekg(0, std::ios::beg);
-
-    //MB to bytes
-    int B = B_MB * 1024 * 1024;  // Buffer size
-    int M = M_GB * 1024 * 1024; // Memory limit
-
-    int avg_record_size = 256;  
-    int num_records_per_buffer = B / avg_record_size;
-    int num_buffers = M / B;
-
-    std::vector<std::vector<std::string>> buffer;
-    std::vector<std::string> chunkFiles;
-    int chunkIndex = 0;
-
-    while (true) {
-        buffer = loadRecordsInChunks(inFile, num_records_per_buffer * num_buffers);
-        if (buffer.empty()) {
-            std::cout << "No more records to load." << std::endl;
-            std::cout << "Starting the merging process." << std::endl;
-            break;
-        }
-        sortRecordsByColumn(buffer, column);
-        std::string chunkFileName = "chunk_" + std::to_string(chunkIndex++) + ".csv";
-        std::ofstream chunkFile(chunkFileName);
-        if (!chunkFile.is_open()) {
-            std::cerr << "Error opening chunk file for writing." << std::endl;
-            return;
-        }
-
-        for (const auto &record : buffer) {
-            for (size_t i = 0; i < record.size(); ++i) {
-                chunkFile << record[i];
-                if (i < record.size() - 1) {
-                    chunkFile << ",";
-                }
-            }
-            chunkFile << "\n";
-            //std::cout << "Written record to chunk file: " << record[0] << "..." << std::endl;
-        }
-        chunkFile.close();
-        chunkFiles.push_back(chunkFileName);
-
-        std::cout << "Chunk written to file: " << chunkFileName << std::endl;
-    }
-
-    inFile.close();
-    mergeSortedChunks(chunkFiles, outputFile, column);
-    std::cout << "Sorting and merging completed." << std::endl;
-}
-
+// Main Function
 int main() {
     int B_MB, M_GB, column;
     std::cout << "Enter the size of the buffer [MB] (MAXIMUM 200): ";
     std::cin >> B_MB;
     std::cout << "Enter the size of the memory [MB]  (MAXIMUM 1024 (1GB)): ";
     std::cin >> M_GB;
-    std::cout << "Enter the column to sort by (0 to " << NUM_COLUMNS - 1 << "): ";
+    std::cout << "Enter the column to sort by (0 to 15): ";
     std::cin >> column;
 
-    if (column < 0 || column >= NUM_COLUMNS) {
-        std::cerr << "Invalid column index." << std::endl;
+    if (column < 0 || column >= 16) {
+        std::cerr << "Invalid column index!" << std::endl;
         return 1;
     }
-    if (M_GB > 1024 || M_GB < 0){
-        std::cerr << "Invalid size of memory." << std::endl;
-        return 1;
-    }
-    if (B_MB > 200 || B_MB < 0){
-        std::cerr << "Invalid size of buffer." << std::endl;
-        return 1;
-    }
-    if (B_MB > M_GB){
-        std::cerr << "The buffer size can not be greater than the memory size" << std::endl;
+    if (M_GB > 1024 || M_GB < 0 || B_MB > 200 || B_MB < 0 || B_MB > M_GB) {
+        std::cerr << "Invalid buffer or memory size!" << std::endl;
         return 1;
     }
 
-    //STARTING THE TIMER
-    auto start_time = std::chrono::high_resolution_clock::now();
+    int B = B_MB * 1024 * 1024;
+    int M = M_GB * 1024 * 1024;
 
-    convertToCSV("TPC-H/dbgen/lineitem.tbl", "lineitem_fixed.csv");
-    sortCSVRecords("lineitem_fixed.csv", "lineitem_sorted.csv", column, B_MB, M_GB);
+    auto start = std::chrono::high_resolution_clock::now();
+    separateColumnsToChunksWithBuffer("TPC-H/dbgen/lineitem.tbl", B);
 
-    //STOPPING THE TIMER
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed_time = end_time - start_time;
-    std::cout << std::endl;
-    std::cout << "Conversion, sorting, and merging completed respecting the buffer and memory limit." << std::endl;
-    std::cout << "Elapsed time: " << elapsed_time.count() << " seconds." << std::endl;
-    std::cout << std::endl;
+    // Sort the selected column
+    std::string selectedColumnFile = "chunk_col" + std::to_string(column + 1) + ".tbl";
+    std::string sortedColumnFile = "chunk_col" + std::to_string(column + 1) + "_sorted.tbl";
+    sortSelectedColumnChunkWithMemory(selectedColumnFile, sortedColumnFile, M);
+
+    // Merge all columns based on the sorted column
+    std::vector<std::string> columnFiles = {
+        "chunk_col1.tbl", "chunk_col2.tbl", "chunk_col3.tbl", "chunk_col4.tbl",
+        "chunk_col5.tbl", "chunk_col6.tbl", "chunk_col7.tbl", "chunk_col8.tbl",
+        "chunk_col9.tbl", "chunk_col10.tbl", "chunk_col11.tbl", "chunk_col12.tbl",
+        "chunk_col13.tbl", "chunk_col14.tbl", "chunk_col15.tbl", "chunk_col16.tbl"
+    };
+    mergeColumnsWithSortedColumn(sortedColumnFile, columnFiles, column, "lineitem_sorted_foi.tbl");
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+
+    std::cout << "Sorting by column " << column << " completed successfully.\n";
+    std::cout << "Elapsed time: " << elapsed.count() << " seconds." << std::endl;
 
     return 0;
 }
